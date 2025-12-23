@@ -1,13 +1,23 @@
-"""""""""
-Computes the 1D radiation profiles used to paint the 21cm maps.
-"""""""""
+"""1D radiation profile solver used to create inputs for the painter.
+
+This module contains :class:`RadiationProfileSolver` which computes the
+radial emission, heating and ionization profiles for a matrix of halo
+masses and accretion rates. The results are stored in a
+:class:`RadiationProfiles` dataclass for later use by the painting
+stage.
+"""
 
 import numpy as np
 from scipy.integrate import trapezoid, solve_ivp
 from scipy.interpolate import interp1d
 import logging
 logger = logging.getLogger(__name__)
-
+try:
+    from mpi4py import MPI
+    MPI_ENABLED = True
+except RuntimeError:
+    # mpi fails to import because the host system does not have it installed
+    MPI_ENABLED = False
 
 from ..cosmo import comoving_distance, hubble
 from ..cross_sections import alpha_HII
@@ -23,17 +33,20 @@ from .helpers import Ngdot_ion, mean_gamma_ion_xray, solve_xe, rho_alpha_profile
 from .massaccretion import mass_accretion
 
 
-class ProfileSolver:
-    """
-    Computes the 1D profiles. Similar to the HM for 21cm (Schneider et al 2021)
-    TODO
+class RadiationProfileSolver:
+    """Compute radiation, heating and ionization profiles around sources.
+
+    The solver produces arrays of X-ray emissivity, heating rates and
+    Lyman-alpha emissivity as a function of radius for a set of halo
+    masses and accretion parameters. Results are returned as a
+    :class:`RadiationProfiles` instance.
     """
 
-    def __init__(self, parameters: Parameters, handler: Handler, redshifts: np.ndarray):
+    def __init__(self, parameters: Parameters, redshifts: np.ndarray):
         """
         Args:
             parameters: Parameters dataclass
-            handler: Handler responsible for writing the computed profiles to disk so that they can be used later on
+            redshifts: array of redshifts at which to compute the profiles, in decreasing order
         """
 
         # self.z_initial = parameters.solver.Z  # starting redshift
@@ -47,11 +60,57 @@ class ProfileSolver:
         Nr = 200
         self.r_grid = np.logspace(np.log10(rmin), np.log10(rmax), Nr) ##cMpc/h
         self.parameters = parameters
-        self.handler = handler
         self.z_bins = redshifts
 
 
+    def get_or_compute_profiles(self, handler: Handler) -> RadiationProfiles:
+        """Load profiles from cache or compute and save them if unavailable.
+
+        Args:
+            handler (Handler): IO handler capable of loading/saving
+                :class:`RadiationProfiles` objects.
+
+        Returns:
+            RadiationProfiles: Loaded or freshly computed profiles.
+        """
+        try:
+            profiles = handler.load_file(self.parameters, RadiationProfiles)
+            logger.info("Loaded radiation profiles from cache.")
+            return profiles
+        except FileNotFoundError:
+            logger.info("Radiation profiles not found in cache. Launching a single computation process.")
+
+        # we need to consider that this is likely being run in MPI mode. Only a single rank should perform the computation and save the results, others should wait and then load the results
+        if MPI_ENABLED:
+            comm = MPI.COMM_WORLD
+            rank = comm.Get_rank()
+            if rank == 0:
+                profiles = self.solve()
+                handler.write_file(self.parameters, profiles)
+                logger.info(f"Rank {rank} computed profiles and saved them to cache.")
+                # notify other ranks that computation is done
+                comm.Barrier()
+            else:
+                # wait for rank 0 to finish computation and saving
+                comm.Barrier()
+                profiles = handler.load_file(self.parameters, RadiationProfiles)
+                logger.info(f"Rank {rank} loaded radiation profiles from cache after computation by rank 0.")
+        else:
+            profiles = self.solve()
+            handler.write_file(self.parameters, profiles)
+            logger.info("Radiation profiles computed and saved to cache.")
+        return profiles
+
+
     def solve(self) -> RadiationProfiles:
+        # if MPI is being used, only compute on rank 0
+        if MPI_ENABLED:
+            comm = MPI.COMM_WORLD
+            rank = comm.Get_rank()
+            if rank != 0:
+                logger.warning(f"RadiationProfileSolver.solve() called on non-root MPI rank {rank=}. Only the root rank will perform the computation.")
+                return
+
         # we will compute the profiles for specific values of M and dM/dt. Later on we will assume that the profiles are the same for all halos in a bin around these values
         # so we need both: the values at the center of the bin and the values at the edges of the bin
         halo_mass_bins, _ = mass_accretion(
@@ -110,11 +169,11 @@ class ProfileSolver:
 
 
     def R_bubble(self):
-        """
-        Returns
-        ----------
-        TODO
-        Comoving size [cMpc/h] of the ionized bubble around the source, as a function of time.
+        """Compute the ionized bubble radius evolution for each mass/alpha bin.
+
+        Returns:
+            numpy.ndarray: Bubble radii (comoving cMpc/h) with shape
+            (mass_bins-1, alpha_bins-1, len(z_bins)).
         """
 
         Ngam_dot = Ngdot_ion(
@@ -169,17 +228,15 @@ class ProfileSolver:
 
 
     def rho_xray(self, rr: np.ndarray, xe: np.ndarray):
-        """
+        """Compute X-ray energy deposition profiles as a function of radius.
+
         Args:
-            parameters: dictionary containing all the input parameters
-            z_bins: redshift in decreasing order.
-            rr: comoving distance from source center [cMpc/h]
-            M_accr: function of zz, hence should increase. 3D array of shape [M_bins, alpha_bins, z_arr]
-            dMdt_accr: Time derivative of halo mass (MAR). 3D array of shape [M_bins, alpha_bins, z_arr]
+            rr (np.ndarray): Radial grid (comoving cMpc/h) where profiles are evaluated.
+            xe (np.ndarray): Free electron fraction history corresponding to ``self.z_bins``.
 
         Returns:
-            X-ray profile, i.e. energy injected as heat by X-rays, in [eV/s], and of shape [M_bins, alpha_bins, z_arr, r_arr]
-            (zz,rr,M_bin) (M_accr, dMdt_accr all have same dimension :(zz,M_bin) )
+            numpy.ndarray: X-ray heating / energy deposition arrays with
+            shape (len(rr), mass_bins-1, alpha_bins-1, len(z_bins)).
         """
 
         Om = self.parameters.cosmology.Om
@@ -257,7 +314,6 @@ class ProfileSolver:
             # the main component of the emission is given by an integral over the frequency
             # to compute the integral we prepend the nu dependence as the first axis of the flux array (flux[nu, r, Mh, alpha])
 
-
             def integrand(nu_val: np.ndarray):
                 # In the following we will always keep the nu_val in the 0th axis of the resulting array
 
@@ -283,26 +339,27 @@ class ProfileSolver:
 
             integrated_flux = trapezoid(integrand(nu), nu, axis=0)
             heat = integrated_flux
-            fXh = f_Xh(self.parameters, xe[i])
+            fXh = f_Xh(xe[i])
             rho = fXh * 1 / (4 * np.pi * (rr/(1+z)) ** 2)[:, None, None] * heat / (cm_per_Mpc/h0) ** 2
             # logger.debug(f"{fXh.shape=}, {rr.shape=}, {nu.shape=}, {rho.shape=}")
             rho_xray[..., i] = rho
-
 
         return rho_xray
 
 
     def rho_heat(self, rho_xray: np.ndarray):
-        """
-        Parameters
-        ----------
-        rho_xray :  output of rho_xray.
+        """Solve the temperature evolution from X-ray heating rates.
 
-        Returns
-        ----------
-        Solve the temperature equation, to go from a heating rate to a Temperature in [K].
-        Array of shape (zz,rr, M_bin)
-        We assume 0K initial conditions (background adiabatic temperature is added afterward at the map level.)
+        The routine integrates the heating equation over scale factor to
+        produce a temperature profile from the supplied heating rate
+        ``rho_xray``.
+
+        Args:
+            rho_xray (np.ndarray): Output of :meth:`rho_xray`.
+
+        Returns:
+            numpy.ndarray: Temperature profiles with the same mass/alpha/z
+            axes as the inputs.
         """
         # add the decoupling redshift as "initial condition"
         z0 = self.parameters.cosmology.z_decoupling
