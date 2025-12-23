@@ -1,7 +1,10 @@
 name: Test Pip Installation
 
 on:
-  pull_request
+  pull_request:
+  push:
+    branches:
+      - main
 
 
 jobs:
@@ -21,7 +24,10 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y fftw
+        sudo apt-get install -y --no-install-recommends \
+          libfftw3-dev \
+          libhdf5-dev \
+          libopenmpi-dev
 
     - name: Install package
       run: |
