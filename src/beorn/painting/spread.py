@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 from ..structs.parameters import Parameters
 
 
-def spreading_excess_fast(parameters: Parameters, Grid_input, plot__=False):
+def spreading_excess_fast(parameters: Parameters, Grid_input, print_time=False):
     """Redistribute excess ionization from overlapping regions.
 
     The input grid may contain cells with ionization fraction greater
@@ -22,7 +22,7 @@ def spreading_excess_fast(parameters: Parameters, Grid_input, plot__=False):
             thresholds and approximations.
         Grid_input (numpy.ndarray): 3D ionization fraction grid (values
             may be >1 where overlaps occur).
-        plot__ (bool, optional): If True, print simple progress
+        print_time (bool, optional): If True, print simple progress
             updates for large-region processing. Defaults to False.
 
     Returns:
@@ -90,9 +90,9 @@ def spreading_excess_fast(parameters: Parameters, Grid_input, plot__=False):
 
         logger.debug(f'There are {len(Small_regions_labels)} connected regions with less than {pix_thresh} pixels. They contain a fraction {round(excess_ion / x_ion_tot_i, 4)} of the total ionisation fraction.')
 
-        Grid = spread_single(parameters, Grid, small_regions, print_time=None)  # Do the spreading for the small regions
+        Grid = spread_single(parameters, Grid, small_regions)  # Do the spreading for the small regions
         if np.any(Grid[small_regions] > 1):
-            logger.error('small regions not correctly spread')
+            logger.error('Small regions not correctly spread')
 
         all_regions_labels = np.array(range(1, label_max + 1))  # the remaining larges overlapping ionized regions
         large_regions_labels = all_regions_labels[np.where(np.isin(all_regions_labels, Small_regions_labels) == False)[
@@ -100,9 +100,9 @@ def spreading_excess_fast(parameters: Parameters, Grid_input, plot__=False):
 
         # Then do the spreading individually for large regions
         for i, ir in enumerate(large_regions_labels):
-            if plot__:
+            if print_time:
                 if i % 100 == 0:
-                    print('doing region ', i, 'over ', len(large_regions_labels), ' regions in total')
+                    print(f'Doing region {i} over {len(large_regions_labels)} regions in total')
             connected_indices = np.where(label_image == ir)
             Grid = spread_single(parameters, Grid, connected_indices)
 
