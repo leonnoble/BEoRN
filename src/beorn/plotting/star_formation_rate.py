@@ -25,7 +25,7 @@ def draw_star_formation_rate(ax: plt.Axes, parameters: Parameters, label=None, c
     # restrict the simulated mass range
     bins = parameters.simulation.halo_mass_bins
 
-    keep = (bins >mass_= mass_range[0]) & (bins <= mass_range[1])
+    keep = (bins > mass_range[0]) & (bins <= mass_range[1])
     keep_bins = bins[keep]
 
     fstar = f_star_Halo(parameters, keep_bins)
