@@ -3,7 +3,7 @@ name = "BEoRN"
 version = "2.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 
 # include in docs
 dependencies = [
@@ -29,6 +29,8 @@ extra = [
 requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.package-data]
+beorn = ["input_data/*.dat", "files/*.dat"]
 
 [project.urls]
 Homepage = "https://beorn.cosmic-reionization.github.io"
