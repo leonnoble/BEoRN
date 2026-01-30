@@ -2,21 +2,21 @@
 Tutorials
 =========
 
+The following examples will help you get started with ``beorn``.
 
-The following examples will help you get started with ``beorn``:
+Some notebooks that show common use cases and visual examples:
 
 .. toctree::
    :maxdepth: 2
-   :caption: Examples:
 
-   .. some notebooks that show a few use cases and give visual examples of how to use beorn
+   examples/artificial_halos
+   examples/21cmfast_halos
+   examples/nbody_simulation_halos
 
-   examples/artificial_halos.ipynb
-   examples/21cmfast_halos.ipynb
-   examples/nbody_simulation_halos.ipynb
+A full run from a non-interactive script (command-line usage):
 
-   .. a full run from a non-interactive script (to be run from command line)
+.. toctree::
+   :maxdepth: 1
 
-   examples/full_run_file.rst
-
-   examples/simulation_comparison.ipynb
+   examples/full_run_file
+   examples/simulation_comparison

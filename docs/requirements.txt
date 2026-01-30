@@ -1,0 +1,12 @@
+# Core Sphinx
+sphinx>=7
+
+# Theme used by BEoRN docs
+sphinx-book-theme
+
+# Notebook support
+myst-nb
+jupyter-cache
+
+# Optional but recommended
+nbsphinx
